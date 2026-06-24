@@ -1,9 +1,12 @@
-# SatisFactory — Windows downloads
+# SatisFactory — downloads
 
 Public download hub for **SatisFactory**. The builds here are produced automatically from
 the private source repos and refreshed on every change — so this is always the latest.
 
-## Install / update (one line)
+- **Windows** (the VST3 plugin + Standalone + editor) → the one-line installer just below.
+- **Android** (the companion phone app) → [scan the QR further down](#install-on-android-phone--tablet).
+
+## Windows — install / update (one line)
 
 Open **PowerShell** and paste:
 
@@ -48,6 +51,32 @@ Prefer to grab the zip yourself? Use the Releases on this repo:
 
 Unzip, then copy `SatisFactory.vst3` into `C:\Program Files\Common Files\VST3` and re-scan
 plugins in your DAW. Run `satisfactory_editor.exe` from the editor folder.
+
+## Install on Android (phone / tablet)
+
+The **SatisFactory companion app** drives the plugin from your phone over a USB cable —
+carry a cartridge, tap its pads, and tweak its knobs live. Install it straight from here.
+
+**Scan this with your phone's camera**, then open the link it offers:
+
+![Scan to install the SatisFactory Android app](phone-install-qr.png)
+
+…or just open this link on the phone:
+
+```
+https://github.com/mikeyd433/SatisFactory_Releases/releases/download/phone-latest/SatisFactory-Phone.apk
+```
+
+**First time only:** your phone will ask to allow **"Install unknown apps"** for the app
+you opened the link with (your browser or Files) — turn it on once, then tap the downloaded
+`.apk` to install.
+
+**To update later:** scan the same QR (or reopen the same link) and install again — it
+replaces the old version **in place, no uninstall needed**. The link always points at the
+newest build.
+
+> These are developer builds installed outside the Play Store (sideloaded), so the first
+> install may show a Play Protect "unknown developer" notice — choose **Install anyway**.
 
 ## What is SatisFactory?
 
