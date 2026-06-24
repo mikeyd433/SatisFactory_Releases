@@ -157,6 +157,22 @@ try {
       New-Shortcut (Join-Path $startMenu 'SatisFactory Standalone.lnk') $t $standaloneDir
       Write-Ok "Shortcut created: SatisFactory Standalone (Start Menu)"
     }
+
+    # One-click updater: a shortcut that re-runs THIS installer from the public mirror,
+    # so a double-click force-updates everything to the latest build. Stays per-user
+    # (don't run it as admin) so it keeps updating the folder REAPER is pointed at.
+    $updUrl = 'https://raw.githubusercontent.com/mikeyd433/SatisFactory_Releases/main/install-satisfactory.ps1'
+    $psExe  = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    foreach ($loc in @((Join-Path $startMenu 'Update SatisFactory.lnk'), (Join-Path $desktop 'Update SatisFactory.lnk'))) {
+      $sc = $shell.CreateShortcut($loc)
+      $sc.TargetPath       = $psExe
+      $sc.Arguments        = "-NoProfile -ExecutionPolicy Bypass -NoExit -Command `"irm $updUrl | iex`""
+      $sc.WorkingDirectory = $env:USERPROFILE
+      if ($editorDir) { $sc.IconLocation = (Join-Path $editorDir 'satisfactory_editor.exe') + ',0' }
+      $sc.Description       = 'Download and install the latest SatisFactory builds'
+      $sc.Save()
+    }
+    Write-Ok "Shortcut created: Update SatisFactory (Start Menu + Desktop) — double-click to update"
   }
 
   # ---------------------------------------------------------------- Summary
@@ -165,6 +181,7 @@ try {
   Write-Host "  VST3:       $installedVst3"
   if ($standaloneDir) { Write-Host "  Standalone: $standaloneDir\SatisFactory.exe" }
   if ($editorDir)     { Write-Host "  Editor:     $editorDir\satisfactory_editor.exe" }
+  if (-not $NoShortcuts) { Write-Host '  Update:     double-click "Update SatisFactory" on your Desktop any time' -ForegroundColor Green }
   Write-Host ""
   if ($vst3Scope -eq 'user') {
     Write-Warn2 "The VST3 went to your PER-USER folder (no admin needed):"
