@@ -173,6 +173,15 @@ try {
       $sc.Save()
     }
     Write-Ok "Shortcut created: Update SatisFactory (Start Menu + Desktop) — double-click to update"
+
+    # Phone-app shortcut: opens the public "Install on Android" page (QR + link) so you can
+    # scan it from your phone to install/update the SatisFactory Android app. A .url opens
+    # the page in your default browser — nothing to install on the PC.
+    $phoneUrl = 'https://github.com/mikeyd433/SatisFactory_Releases#install-on-android-phone--tablet'
+    foreach ($loc in @((Join-Path $startMenu 'SatisFactory Phone App.url'), (Join-Path $desktop 'SatisFactory Phone App.url'))) {
+      Set-Content -LiteralPath $loc -Encoding ASCII -Value @('[InternetShortcut]', "URL=$phoneUrl")
+    }
+    Write-Ok "Shortcut created: SatisFactory Phone App (Start Menu + Desktop) — scan the QR to install the phone app"
   }
 
   # ---------------------------------------------------------------- Summary
@@ -182,6 +191,7 @@ try {
   if ($standaloneDir) { Write-Host "  Standalone: $standaloneDir\SatisFactory.exe" }
   if ($editorDir)     { Write-Host "  Editor:     $editorDir\satisfactory_editor.exe" }
   if (-not $NoShortcuts) { Write-Host '  Update:     double-click "Update SatisFactory" on your Desktop any time' -ForegroundColor Green }
+  if (-not $NoShortcuts) { Write-Host '  Phone app:  double-click "SatisFactory Phone App" and scan the QR with your phone' -ForegroundColor Green }
   Write-Host ""
   if ($vst3Scope -eq 'user') {
     Write-Warn2 "The VST3 went to your PER-USER folder (no admin needed):"
