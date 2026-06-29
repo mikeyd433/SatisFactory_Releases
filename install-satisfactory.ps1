@@ -83,6 +83,41 @@ function Get-AndExtract([string]$url, [string]$name) {
   return $out
 }
 
+# Stop any SatisFactory app whose .exe runs from inside $dir, so its files (the
+# .exe and loaded DLLs like desktop_drop_plugin.dll) unlock and the dir can be
+# replaced. A loaded DLL can't be deleted on Windows, so updating over a running
+# editor/standalone fails with "Access to the path ... is denied" otherwise.
+function Stop-AppProcessesIn([string]$dir) {
+  if (-not $dir) { return }
+  $resolved = Resolve-Path $dir -ErrorAction SilentlyContinue
+  if (-not $resolved) { return }
+  $dirPath = $resolved.Path.TrimEnd('\')
+  $procs = Get-Process -ErrorAction SilentlyContinue | Where-Object {
+    try { $_.Path -and $_.Path.StartsWith($dirPath, [System.StringComparison]::OrdinalIgnoreCase) }
+    catch { $false }   # protected/system process — .Path throws; skip it
+  }
+  foreach ($p in $procs) {
+    try {
+      Write-Warn2 "Closing running $($p.ProcessName) (PID $($p.Id)) so it can be updated ..."
+      $p.CloseMainWindow() | Out-Null
+      if (-not $p.WaitForExit(3000)) { $p | Stop-Process -Force -ErrorAction SilentlyContinue }
+    } catch {}
+  }
+}
+
+# Replace an install dir: stop anything running from it, then remove with a few
+# retries (file handles release a beat after a process exits). If it's still
+# locked, fail with a clear "close the app" message instead of a raw access error.
+function Remove-AppDir([string]$dir) {
+  if (-not (Test-Path $dir)) { return }
+  Stop-AppProcessesIn $dir
+  for ($i = 0; $i -lt 5; $i++) {
+    try { Remove-Item -Recurse -Force $dir -ErrorAction Stop; return }
+    catch { Start-Sleep -Milliseconds 600 }
+  }
+  throw "Couldn't update '$dir' — a SatisFactory app from there is still running and holding its files open. Close SatisFactory (the editor and any Standalone window), then re-run this installer."
+}
+
 $installedVst3 = $null
 $standaloneDir = $null
 $editorDir     = $null
@@ -113,7 +148,7 @@ try {
                    Select-Object -First 1
   if ($standaloneExe) {
     $standaloneDir = Join-Path $env:LOCALAPPDATA 'SatisFactory\Standalone'
-    if (Test-Path $standaloneDir) { Remove-Item -Recurse -Force $standaloneDir }
+    Remove-AppDir $standaloneDir
     New-Item -ItemType Directory -Force -Path $standaloneDir | Out-Null
     Copy-Item -Recurse -Force (Join-Path $standaloneExe.DirectoryName '*') $standaloneDir
     Write-Ok "Standalone installed -> $standaloneDir"
@@ -126,7 +161,7 @@ try {
                  Select-Object -First 1
     if (-not $editorExe) { throw "satisfactory_editor.exe not found inside the downloaded editor zip." }
     $editorDir = Join-Path $env:LOCALAPPDATA 'SatisFactory\editor'
-    if (Test-Path $editorDir) { Remove-Item -Recurse -Force $editorDir }
+    Remove-AppDir $editorDir
     New-Item -ItemType Directory -Force -Path $editorDir | Out-Null
     Copy-Item -Recurse -Force (Join-Path $editorExe.DirectoryName '*') $editorDir
     Write-Ok "Editor installed -> $editorDir"
