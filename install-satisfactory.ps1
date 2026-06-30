@@ -110,17 +110,45 @@ function Stop-AppProcessesIn([string]$dir) {
   }
 }
 
-# Replace an install dir: stop anything running from it, then remove with a few
-# retries (file handles release a beat after a process exits). If it's still
-# locked, fail with a clear "close the app" message instead of a raw access error.
+# Best-effort sweep of any "<dir>.old_*" folders an earlier run renamed aside
+# but couldn't delete yet (the lock had cleared by now, or it'll try again next
+# time). Never throws.
+function Clear-AsideDirs([string]$dir) {
+  $parent = Split-Path -Parent $dir
+  $leaf   = Split-Path -Leaf  $dir
+  if (-not (Test-Path $parent)) { return }
+  Get-ChildItem -LiteralPath $parent -Directory -Filter "$leaf.old_*" -ErrorAction SilentlyContinue |
+    ForEach-Object { try { Remove-Item -Recurse -Force $_.FullName -ErrorAction SilentlyContinue } catch {} }
+}
+
+# Replace an install dir: stop anything running from it, then clear it so the
+# caller can install fresh. Strategy:
+#  1. Stop apps that run from the dir, then try an in-place delete with a few
+#     retries (file handles release a beat after a process exits, and a brief
+#     antivirus scan / Explorer preview can hold a file for a second or two).
+#  2. If that still fails, RENAME the dir aside and let the caller recreate the
+#     original path. A rename succeeds for the common *non-app* locks (an open
+#     File Explorer window on the folder, antivirus, the Windows Search indexer)
+#     that block deletion but not a move — so the update goes through instead of
+#     dead-ending. A genuinely running app holds a *loaded DLL*, which blocks the
+#     rename too, so the clear "close the app" error below still fires for it.
 function Remove-AppDir([string]$dir) {
-  if (-not (Test-Path $dir)) { return }
+  if (-not (Test-Path $dir)) { Clear-AsideDirs $dir; return }
   Stop-AppProcessesIn $dir
-  for ($i = 0; $i -lt 5; $i++) {
-    try { Remove-Item -Recurse -Force $dir -ErrorAction Stop; return }
-    catch { Start-Sleep -Milliseconds 600 }
+  for ($i = 0; $i -lt 8; $i++) {
+    try { Remove-Item -Recurse -Force $dir -ErrorAction Stop; Clear-AsideDirs $dir; return }
+    catch { Start-Sleep -Milliseconds (400 + $i * 300) }   # ~0.4s..2.5s, ~11s total
   }
-  throw "Couldn't update '$dir' — a SatisFactory app from there is still running and holding its files open. Close SatisFactory (the editor and any Standalone window), then re-run this installer."
+  $aside = "$dir.old_$([Guid]::NewGuid().ToString('N').Substring(0,8))"
+  try {
+    Move-Item -LiteralPath $dir -Destination $aside -Force -ErrorAction Stop
+  } catch {
+    throw "Couldn't update '$dir' — it's locked by another program. Usually that's SatisFactory still running: close the editor and any Standalone window (check the system tray and Task Manager for 'satisfactory_editor' or 'SatisFactory'). An open File Explorer window on that folder, antivirus, or Windows Search can also hold it — closing those (or just rebooting) and re-running the installer will clear it."
+  }
+  # Renamed aside successfully; the original path is now free. Try to delete the
+  # old copy now, but don't fail the install if it's still held — Clear-AsideDirs
+  # sweeps it on a later run.
+  try { Remove-Item -Recurse -Force $aside -ErrorAction SilentlyContinue } catch {}
 }
 
 # Install Android platform-tools (adb) to a known per-user location so the editor
