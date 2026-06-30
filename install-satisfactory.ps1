@@ -94,6 +94,21 @@ function Get-AndExtract([string]$url, [string]$name) {
 # can be neither deleted nor renamed, which is what dead-ends the update).
 $script:AppProcNames = @('satisfactory_editor', 'SatisFactory')
 
+# Shut down the adb server the editor starts for phone-mirroring. adb daemonizes,
+# so its server process keeps running after the editor closes — and it inherited
+# the editor's working directory (…\SatisFactory\editor), so that open *directory*
+# handle blocks the editor folder from being deleted OR renamed even though no
+# SatisFactory app is left running (the exact "locked, nothing running" dead end).
+# Graceful 'kill-server' first, then force-kill any stragglers. adb restarts on
+# demand, so this is safe to call before any update.
+function Stop-Adb {
+  $adb = Join-Path $env:LOCALAPPDATA 'SatisFactory\platform-tools\adb.exe'
+  if (Test-Path $adb) { try { & $adb 'kill-server' 2>$null | Out-Null } catch {} }
+  Get-Process adb -ErrorAction SilentlyContinue | ForEach-Object {
+    try { Stop-Process -Id $_.Id -Force -ErrorAction Stop } catch {}
+  }
+}
+
 # Stop any SatisFactory app holding files in $dir — matched by exe path under the
 # dir OR by known process name — so its files (the .exe and loaded DLLs like
 # desktop_drop_plugin.dll) unlock and the dir can be replaced. Returns a list of
@@ -101,6 +116,7 @@ $script:AppProcNames = @('satisfactory_editor', 'SatisFactory')
 # running as administrator that a non-elevated installer can't kill), so the
 # caller can name the real blocker.
 function Stop-AppProcessesIn([string]$dir) {
+  Stop-Adb | Out-Null   # release the editor folder if the lingering adb server holds it
   $dirPath = $null
   if ($dir) {
     $resolved = Resolve-Path $dir -ErrorAction SilentlyContinue
@@ -171,7 +187,7 @@ function Remove-AppDir([string]$dir) {
     if ($survivors -and $survivors.Count) {
       throw "Couldn't update '$dir' — still locked by: $($survivors -join ', '). That's a SatisFactory app this installer couldn't close (often because it was started as administrator). End it from Task Manager -> Details tab (right-click -> End task), then re-run the installer. If it keeps coming back, reboot and run the update before opening anything."
     }
-    throw "Couldn't update '$dir' — it's locked by another program, but no SatisFactory app was found running. Something else is holding the folder: an open File Explorer window on it, antivirus mid-scan, or Windows Search. Close those — or just REBOOT and run the update first thing, before opening the editor. (To see exactly what's holding it: open Resource Monitor -> CPU -> Associated Handles, and search 'SatisFactory\editor'.)"
+    throw "Couldn't update '$dir' — it's locked by another program, but no SatisFactory app was found running. Most likely an open File Explorer window on that folder, antivirus mid-scan, or Windows Search holding it. Close those — or just REBOOT and run the update first thing, before opening the editor. (To see exactly what's holding it: open Resource Monitor -> CPU -> Associated Handles and search 'SatisFactory\editor'; whatever process it names, close it.)"
   }
   # Renamed aside successfully; the original path is now free. Try to delete the
   # old copy now, but don't fail the install if it's still held — Clear-AsideDirs
