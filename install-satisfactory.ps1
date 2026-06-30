@@ -32,12 +32,17 @@
 
 .PARAMETER Mirror
   Override the public mirror repo (owner/name). Default: mikeyd433/SatisFactory_Releases.
+
+.PARAMETER NoAdb
+  Skip auto-installing Android platform-tools (adb). adb powers the editor's
+  "live mirror to phone" over USB; it's installed by default alongside the editor.
 #>
 [CmdletBinding()]
 param(
   [switch]$PluginOnly,
   [switch]$SystemVst3,
   [switch]$NoShortcuts,
+  [switch]$NoAdb,
   [string]$Mirror = 'mikeyd433/SatisFactory_Releases'
 )
 
@@ -118,9 +123,38 @@ function Remove-AppDir([string]$dir) {
   throw "Couldn't update '$dir' — a SatisFactory app from there is still running and holding its files open. Close SatisFactory (the editor and any Standalone window), then re-run this installer."
 }
 
+# Install Android platform-tools (adb) to a known per-user location so the editor
+# auto-detects it for "live mirror to phone" — no manual adb setup. Non-fatal: a
+# download/extract failure just warns (you can still install adb yourself and use
+# "Locate adb" in the editor). Stops any adb server from the old copy first.
+function Install-PlatformTools {
+  try {
+    $dest = Join-Path $env:LOCALAPPDATA 'SatisFactory\platform-tools'
+    Write-Step "Downloading Android platform-tools (adb) ..."
+    $zip = Join-Path $work 'platform-tools.zip'
+    Invoke-WebRequest -Uri 'https://dl.google.com/android/repository/platform-tools-latest-windows.zip' `
+                      -OutFile $zip -UseBasicParsing
+    $tmp = Join-Path $work 'platform-tools-extract'
+    if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
+    Expand-Archive -Path $zip -DestinationPath $tmp -Force
+    # The zip nests everything under a top-level 'platform-tools' folder.
+    $src = Join-Path $tmp 'platform-tools'
+    if (-not (Test-Path $src)) { $src = $tmp }
+    Remove-AppDir $dest                       # stop a running adb server, then replace
+    New-Item -ItemType Directory -Force -Path $dest | Out-Null
+    Copy-Item -Recurse -Force (Join-Path $src '*') $dest
+    Write-Ok "adb installed -> $dest"
+    return $dest
+  } catch {
+    Write-Warn2 "Skipped adb auto-install: $($_.Exception.Message). You can install Android platform-tools yourself and use 'Locate adb' in the editor."
+    return $null
+  }
+}
+
 $installedVst3 = $null
 $standaloneDir = $null
 $editorDir     = $null
+$adbDir        = $null
 
 try {
   # ---------------------------------------------------------------- VST3 + Standalone
@@ -165,6 +199,10 @@ try {
     New-Item -ItemType Directory -Force -Path $editorDir | Out-Null
     Copy-Item -Recurse -Force (Join-Path $editorExe.DirectoryName '*') $editorDir
     Write-Ok "Editor installed -> $editorDir"
+
+    # adb for the editor's "live mirror to phone" over USB — auto-detected by the
+    # editor, so the phone link needs no manual setup. Opt out with -NoAdb.
+    if (-not $NoAdb) { $adbDir = Install-PlatformTools }
   }
 
   # ---------------------------------------------------------------- Shortcuts
@@ -225,6 +263,7 @@ try {
   Write-Host "  VST3:       $installedVst3"
   if ($standaloneDir) { Write-Host "  Standalone: $standaloneDir\SatisFactory.exe" }
   if ($editorDir)     { Write-Host "  Editor:     $editorDir\satisfactory_editor.exe" }
+  if ($adbDir)        { Write-Host "  adb:        $adbDir\adb.exe" }
   if (-not $NoShortcuts) { Write-Host '  Update:     double-click "Update SatisFactory" on your Desktop any time' -ForegroundColor Green }
   if (-not $NoShortcuts) { Write-Host '  Phone app:  double-click "SatisFactory Phone App" and scan the QR with your phone' -ForegroundColor Green }
   Write-Host ""
