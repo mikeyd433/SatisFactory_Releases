@@ -124,12 +124,15 @@ function Remove-AppDir([string]$dir) {
 }
 
 # Install Android platform-tools (adb) to a known per-user location so the editor
-# auto-detects it for "live mirror to phone" — no manual adb setup. Non-fatal: a
-# download/extract failure just warns (you can still install adb yourself and use
-# "Locate adb" in the editor). Stops any adb server from the old copy first.
+# auto-detects it for "live mirror to phone" — no manual adb setup.
+#
+# Stage-then-swap: download + extract + VERIFY adb.exe in a temp copy FIRST, and
+# only then replace the installed copy. A failed/blocked download therefore never
+# destroys a working adb (the bug that left platform-tools empty). Non-fatal: on
+# any failure it warns and keeps the existing copy.
 function Install-PlatformTools {
+  $dest = Join-Path $env:LOCALAPPDATA 'SatisFactory\platform-tools'
   try {
-    $dest = Join-Path $env:LOCALAPPDATA 'SatisFactory\platform-tools'
     Write-Step "Downloading Android platform-tools (adb) ..."
     $zip = Join-Path $work 'platform-tools.zip'
     Invoke-WebRequest -Uri 'https://dl.google.com/android/repository/platform-tools-latest-windows.zip' `
@@ -140,14 +143,24 @@ function Install-PlatformTools {
     # The zip nests everything under a top-level 'platform-tools' folder.
     $src = Join-Path $tmp 'platform-tools'
     if (-not (Test-Path $src)) { $src = $tmp }
-    Remove-AppDir $dest                       # stop a running adb server, then replace
+    # Verify the staged copy BEFORE touching the installed one.
+    if (-not (Test-Path (Join-Path $src 'adb.exe'))) {
+      throw "adb.exe was not in the platform-tools download"
+    }
+    # Stop a running adb server from the old copy so its files unlock, then swap.
+    $oldAdb = Join-Path $dest 'adb.exe'
+    if (Test-Path $oldAdb) { try { & $oldAdb 'kill-server' 2>$null | Out-Null } catch {} }
+    Remove-AppDir $dest
     New-Item -ItemType Directory -Force -Path $dest | Out-Null
     Copy-Item -Recurse -Force (Join-Path $src '*') $dest
+    if (-not (Test-Path (Join-Path $dest 'adb.exe'))) {
+      throw "adb.exe was not copied into $dest"
+    }
     Write-Ok "adb installed -> $dest"
     return $dest
   } catch {
-    Write-Warn2 "Skipped adb auto-install: $($_.Exception.Message). You can install Android platform-tools yourself and use 'Locate adb' in the editor."
-    return $null
+    Write-Warn2 "Skipped adb auto-install: $($_.Exception.Message). Existing adb (if any) was left untouched; you can also install Android platform-tools yourself and use 'Locate adb' in the editor."
+    if (Test-Path (Join-Path $dest 'adb.exe')) { return $dest } else { return $null }
   }
 }
 
