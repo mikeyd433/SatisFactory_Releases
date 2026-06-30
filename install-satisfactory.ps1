@@ -88,26 +88,49 @@ function Get-AndExtract([string]$url, [string]$name) {
   return $out
 }
 
-# Stop any SatisFactory app whose .exe runs from inside $dir, so its files (the
-# .exe and loaded DLLs like desktop_drop_plugin.dll) unlock and the dir can be
-# replaced. A loaded DLL can't be deleted on Windows, so updating over a running
-# editor/standalone fails with "Access to the path ... is denied" otherwise.
+# Process names the SatisFactory apps run as — matched by name so a lingering one
+# is caught even when its .Path can't be read (a process started elevated hides
+# its path from a non-elevated installer, and a directory holding a running .exe
+# can be neither deleted nor renamed, which is what dead-ends the update).
+$script:AppProcNames = @('satisfactory_editor', 'SatisFactory')
+
+# Stop any SatisFactory app holding files in $dir — matched by exe path under the
+# dir OR by known process name — so its files (the .exe and loaded DLLs like
+# desktop_drop_plugin.dll) unlock and the dir can be replaced. Returns a list of
+# "name (PID n)" for any matching process still alive after the attempt (e.g. one
+# running as administrator that a non-elevated installer can't kill), so the
+# caller can name the real blocker.
 function Stop-AppProcessesIn([string]$dir) {
-  if (-not $dir) { return }
-  $resolved = Resolve-Path $dir -ErrorAction SilentlyContinue
-  if (-not $resolved) { return }
-  $dirPath = $resolved.Path.TrimEnd('\')
-  $procs = Get-Process -ErrorAction SilentlyContinue | Where-Object {
-    try { $_.Path -and $_.Path.StartsWith($dirPath, [System.StringComparison]::OrdinalIgnoreCase) }
-    catch { $false }   # protected/system process — .Path throws; skip it
+  $dirPath = $null
+  if ($dir) {
+    $resolved = Resolve-Path $dir -ErrorAction SilentlyContinue
+    if ($resolved) { $dirPath = $resolved.Path.TrimEnd('\') }
   }
+  $procs = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+    $match = $false
+    if ($script:AppProcNames -contains $_.ProcessName) {
+      $match = $true                                   # by name (path may be unreadable)
+    } elseif ($dirPath) {
+      try { $match = ($_.Path -and $_.Path.StartsWith($dirPath, [System.StringComparison]::OrdinalIgnoreCase)) }
+      catch { $match = $false }                        # protected process — .Path throws; skip
+    }
+    $match
+  })
   foreach ($p in $procs) {
     try {
       Write-Warn2 "Closing running $($p.ProcessName) (PID $($p.Id)) so it can be updated ..."
       $p.CloseMainWindow() | Out-Null
-      if (-not $p.WaitForExit(3000)) { $p | Stop-Process -Force -ErrorAction SilentlyContinue }
-    } catch {}
+      if (-not $p.WaitForExit(3000)) { Stop-Process -Id $p.Id -Force -ErrorAction Stop }
+    } catch {
+      Write-Warn2 "Couldn't close $($p.ProcessName) (PID $($p.Id)) automatically — it may be running as administrator."
+    }
   }
+  if ($procs.Count) { Start-Sleep -Milliseconds 500 }   # let handles release
+  $survivors = @()
+  foreach ($p in $procs) {
+    try { $p.Refresh(); if (-not $p.HasExited) { $survivors += "$($p.ProcessName) (PID $($p.Id))" } } catch {}
+  }
+  return $survivors
 }
 
 # Best-effort sweep of any "<dir>.old_*" folders an earlier run renamed aside
@@ -134,7 +157,7 @@ function Clear-AsideDirs([string]$dir) {
 #     rename too, so the clear "close the app" error below still fires for it.
 function Remove-AppDir([string]$dir) {
   if (-not (Test-Path $dir)) { Clear-AsideDirs $dir; return }
-  Stop-AppProcessesIn $dir
+  $survivors = Stop-AppProcessesIn $dir
   for ($i = 0; $i -lt 8; $i++) {
     try { Remove-Item -Recurse -Force $dir -ErrorAction Stop; Clear-AsideDirs $dir; return }
     catch { Start-Sleep -Milliseconds (400 + $i * 300) }   # ~0.4s..2.5s, ~11s total
@@ -143,7 +166,12 @@ function Remove-AppDir([string]$dir) {
   try {
     Move-Item -LiteralPath $dir -Destination $aside -Force -ErrorAction Stop
   } catch {
-    throw "Couldn't update '$dir' — it's locked by another program. Usually that's SatisFactory still running: close the editor and any Standalone window (check the system tray and Task Manager for 'satisfactory_editor' or 'SatisFactory'). An open File Explorer window on that folder, antivirus, or Windows Search can also hold it — closing those (or just rebooting) and re-running the installer will clear it."
+    # Name the blocker when we found one we couldn't kill (usually an elevated
+    # leftover); otherwise point at the usual non-app culprits.
+    if ($survivors -and $survivors.Count) {
+      throw "Couldn't update '$dir' — still locked by: $($survivors -join ', '). That's a SatisFactory app this installer couldn't close (often because it was started as administrator). End it from Task Manager -> Details tab (right-click -> End task), then re-run the installer. If it keeps coming back, reboot and run the update before opening anything."
+    }
+    throw "Couldn't update '$dir' — it's locked by another program, but no SatisFactory app was found running. Something else is holding the folder: an open File Explorer window on it, antivirus mid-scan, or Windows Search. Close those — or just REBOOT and run the update first thing, before opening the editor. (To see exactly what's holding it: open Resource Monitor -> CPU -> Associated Handles, and search 'SatisFactory\editor'.)"
   }
   # Renamed aside successfully; the original path is now free. Try to delete the
   # old copy now, but don't fail the install if it's still held — Clear-AsideDirs
